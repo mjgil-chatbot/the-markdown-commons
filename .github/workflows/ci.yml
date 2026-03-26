@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy (all features)
+        run: cargo clippy --all-features -- -A unused_variables -A clippy::needless_range_loop -A clippy::redundant_closure -A clippy::manual_clamp -D warnings
+
+      - name: Test (default features)
+        run: cargo test
+
+      - name: Test (all features)
+        run: cargo test --all-features --lib --tests --bins -- --test-threads=1
+
+      - name: Test (doc)
+        run: cargo test --doc
+
+      - name: Build (release, all features)
+        run: cargo build --release --all-features
+
+      - name: Package
+        run: cargo package --allow-dirty
+
+      - name: Bench (compile only)
+        run: cargo bench --bench parse --no-run
