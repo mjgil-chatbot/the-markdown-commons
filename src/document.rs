@@ -28,6 +28,39 @@ pub struct MarkdownDocument {
     /// All link reference definitions found in the document.
     pub references: Vec<LinkReferenceDefinition>,
 }
+/// A cache for parsed markdown documents that avoids re-parsing the same content.
+///
+/// `DocumentCache` stores parsed documents keyed by their input text. When
+/// the same markdown is parsed again, the cached result is returned immediately.
+///
+/// The cache maintains separate storage for full documents and fragments,
+/// and uses LRU-style ordering to bound memory usage.
+///
+/// # Example
+///
+/// ```
+/// use tmc::{DocumentCache, parse_markdown_cached};
+///
+/// let mut cache = DocumentCache::default();
+///
+/// // First call parses and caches
+/// let html1 = parse_markdown_cached(&mut cache, "# Hello");
+///
+/// // Second call with same input hits cache
+/// let html2 = parse_markdown_cached(&mut cache, "# Hello");
+///
+/// // Cache can be cleared to free memory
+/// cache.clear();
+/// ```
+#[derive(Debug, Default, Clone)]
+pub struct DocumentCache {
+    full_documents: HashMap<String, MarkdownDocument>,
+    fragment_documents: HashMap<String, MarkdownDocument>,
+    full_order: VecDeque<String>,
+    fragment_order: VecDeque<String>,
+    full_document_bytes: usize,
+    fragment_document_bytes: usize,
+}
 /// The top-level block-level nodes in a parsed markdown document.
 ///
 /// Each variant represents a different markdown construct. Use `matches!` or
