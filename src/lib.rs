@@ -5,3 +5,4 @@
 //! - `DocumentCache` provides reusable parsed-document caching
 
 mod common;
+pub mod document;
