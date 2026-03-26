@@ -4,3 +4,4 @@
 //! - `parse_markdown*` helpers are convenience HTML wrappers
 //! - `DocumentCache` provides reusable parsed-document caching
 
+mod common;
