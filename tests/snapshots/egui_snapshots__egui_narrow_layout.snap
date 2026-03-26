@@ -1,0 +1,10 @@
+---
+source: tests/egui_snapshots.rs
+expression: summary
+---
+screen_width=260
+clipped_shapes=13
+text_shapes=5
+line_segments=2
+rect_shapes=6
+painted_width=0.00
