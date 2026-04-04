@@ -2,6 +2,7 @@ use crate::common::Alignment;
 use crate::inline::InlineNode;
 use std::collections::{HashMap, VecDeque};
 mod cache;
+mod markdownish;
 /// A fully parsed markdown document, ready for rendering.
 ///
 /// `MarkdownDocument` is the shared intermediate representation produced by the
