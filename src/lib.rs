@@ -7,3 +7,5 @@
 mod common;
 pub mod document;
 pub mod inline;
+#[cfg(feature = "egui")]
+pub mod egui;
