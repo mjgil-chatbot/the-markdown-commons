@@ -28,3 +28,26 @@ struct MarkdownRenderSummary {
     rect_shapes: usize,
     width: i32,
 }
+fn extract_font_sizes(shapes: &[egui::epaint::ClippedShape]) -> Vec<f32> {
+    let mut sizes = Vec::new();
+    for clipped in shapes {
+        if let egui::epaint::Shape::Text(text_shape) = &clipped.shape {
+            for section in &text_shape.galley.job.sections {
+                let size = section.format.font_id.size;
+                if size > 0.0 && !sizes.iter().any(|s: &f32| (s - size).abs() < 0.1) {
+                    sizes.push(size);
+                }
+            }
+        }
+    }
+    sizes
+}
+fn extract_text_strings(shapes: &[egui::epaint::ClippedShape]) -> Vec<String> {
+    shapes
+        .iter()
+        .filter_map(|clipped| match &clipped.shape {
+            egui::epaint::Shape::Text(text_shape) => Some(text_shape.galley.job.text.clone()),
+            _ => None,
+        })
+        .collect()
+}
