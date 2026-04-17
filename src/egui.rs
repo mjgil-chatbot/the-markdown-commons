@@ -9,6 +9,8 @@
 mod headless_layout_tests;
 #[cfg(test)]
 mod headless_tests;
+mod inline;
+mod style;
 #[allow(unused_imports)]
 use crate::common::{self, Alignment};
 /// A table extracted from markdown for custom rendering.
