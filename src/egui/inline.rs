@@ -476,3 +476,214 @@ fn flatten_inline_nodes(
         }
     }
 }
+#[allow(dead_code)]
+pub(crate) fn render_inline_formatted(
+    ui: &mut egui::Ui,
+    content: &str,
+    wrap_width: f32,
+    base_style: InlineBaseStyle,
+) {
+    let segments = parse_inline_formatting(content);
+
+    if segments.len() == 1 {
+        let span = &segments[0];
+        if !span.is_code {
+            let mut rich = egui::RichText::new(span.text.as_str());
+            let is_bold = span.is_bold || base_style == InlineBaseStyle::Strong;
+            if is_bold {
+                rich = rich.strong();
+            }
+            ui.add(egui::Label::new(rich).wrap_mode(egui::TextWrapMode::Wrap));
+            return;
+        }
+    }
+
+    let style = ui.style().clone();
+    let text_color = style.visuals.text_color();
+    let strong_color = style.visuals.strong_text_color();
+    let mut job = egui::text::LayoutJob::default();
+
+    for span in segments {
+        if span.text.is_empty() {
+            continue;
+        }
+
+        if span.is_code {
+            egui::RichText::new(span.text)
+                .code()
+                .color(text_color)
+                .append_to(
+                    &mut job,
+                    &style,
+                    egui::FontSelection::Default,
+                    ui.text_valign(),
+                );
+            continue;
+        }
+
+        let is_bold = span.is_bold || base_style == InlineBaseStyle::Strong;
+        let mut rich = egui::RichText::new(span.text);
+        if is_bold {
+            rich = rich.strong().color(strong_color);
+        } else {
+            rich = rich.color(text_color);
+        }
+        rich.append_to(
+            &mut job,
+            &style,
+            egui::FontSelection::Default,
+            ui.text_valign(),
+        );
+    }
+
+    job.wrap = egui::text::TextWrapping::wrap_at_width(wrap_width.max(0.0));
+
+    let galley = ui.fonts(|fonts| fonts.layout_job(job));
+    ui.label(galley);
+}
+#[allow(dead_code)]
+pub(crate) fn layout_job_from_inline_markdown(
+    ui: &egui::Ui,
+    content: &str,
+    wrap_width: f32,
+    render_style: InlineRenderStyle,
+) -> egui::text::LayoutJob {
+    let mut job = egui::text::LayoutJob::default();
+    let style = ui.style();
+    let visuals = &style.visuals;
+    let text_color = if render_style.quote {
+        visuals.weak_text_color()
+    } else {
+        visuals.text_color()
+    };
+    let strong_color = if render_style.quote {
+        visuals.weak_text_color()
+    } else {
+        visuals.strong_text_color()
+    };
+    let link_color = visuals.hyperlink_color;
+    let code_bg = visuals.code_bg_color;
+    let code_size = render_style
+        .heading
+        .map(|level| heading_font_size(ui, level))
+        .unwrap_or_else(|| egui::TextStyle::Monospace.resolve(style).size);
+    let code_font = egui::FontId::monospace(code_size);
+    let body_font = egui::TextStyle::Body.resolve(style);
+
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
+
+    let mut strong_depth = usize::from(render_style.base == InlineBaseStyle::Strong);
+    let mut emphasis_depth = 0usize;
+    let mut strikethrough_depth = 0usize;
+    let mut link_destinations: Vec<String> = Vec::new();
+
+    for event in Parser::new_ext(content, options) {
+        match event {
+            Event::Start(tag) => match tag {
+                Tag::Strong => strong_depth += 1,
+                Tag::Emphasis => emphasis_depth += 1,
+                Tag::Strikethrough => strikethrough_depth += 1,
+                Tag::Link { dest_url, .. } => link_destinations.push(dest_url.to_string()),
+                _ => {}
+            },
+            Event::End(tag) => match tag {
+                TagEnd::Strong => strong_depth = strong_depth.saturating_sub(1),
+                TagEnd::Emphasis => emphasis_depth = emphasis_depth.saturating_sub(1),
+                TagEnd::Strikethrough => {
+                    strikethrough_depth = strikethrough_depth.saturating_sub(1)
+                }
+                TagEnd::Link => {
+                    link_destinations.pop();
+                }
+                _ => {}
+            },
+            Event::Text(text) => {
+                append_inline_text(
+                    &mut job,
+                    &text,
+                    body_font.clone(),
+                    strong_depth > 0,
+                    emphasis_depth > 0,
+                    strikethrough_depth > 0,
+                    link_destinations.last().is_some(),
+                    text_color,
+                    strong_color,
+                    link_color,
+                    None,
+                );
+            }
+            Event::Code(code) => {
+                append_inline_text(
+                    &mut job,
+                    &code,
+                    code_font.clone(),
+                    true,
+                    false,
+                    false,
+                    false,
+                    text_color,
+                    strong_color,
+                    link_color,
+                    Some(code_bg),
+                );
+            }
+            Event::SoftBreak => job.append(" ", 0.0, egui::TextFormat::default()),
+            Event::HardBreak => job.append("\n", 0.0, egui::TextFormat::default()),
+            Event::Rule => job.append("\n---\n", 0.0, egui::TextFormat::default()),
+            _ => {}
+        }
+    }
+
+    job.wrap = egui::text::TextWrapping::wrap_at_width(wrap_width.max(0.0));
+    job
+}
+#[allow(dead_code, clippy::too_many_arguments)]
+pub(crate) fn append_inline_text(
+    job: &mut egui::text::LayoutJob,
+    text: &str,
+    font_id: egui::FontId,
+    strong: bool,
+    emphasis: bool,
+    strikethrough: bool,
+    link: bool,
+    text_color: egui::Color32,
+    strong_color: egui::Color32,
+    link_color: egui::Color32,
+    background: Option<egui::Color32>,
+) {
+    if text.is_empty() {
+        return;
+    }
+
+    let mut format = egui::TextFormat {
+        font_id,
+        color: if link {
+            link_color
+        } else if strong {
+            strong_color
+        } else {
+            text_color
+        },
+        ..Default::default()
+    };
+
+    if strong {
+        format.font_id.size += 0.5;
+    }
+    if emphasis {
+        format.italics = true;
+    }
+    if strikethrough {
+        format.strikethrough = egui::Stroke::new(1.0, format.color);
+    }
+    if link {
+        format.underline = egui::Stroke::new(1.0, format.color);
+    }
+    if let Some(background) = background {
+        format.background = background;
+    }
+
+    job.append(text, 0.0, format);
+}
