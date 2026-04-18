@@ -1,5 +1,6 @@
 use std::ops::Range;
 use super::style::{heading_font_size, height_body};
+use crate::inline::{parse_inline_nodes, InlineNode, LinkDefinitions};
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InlineSpan {
@@ -225,10 +226,253 @@ fn collect_link_spans(fragments: &[FlatInlineFragment]) -> Vec<InlineLinkSpan> {
 
     spans
 }
+fn render_selectable_inline(ui: &mut egui::Ui, inline: InlineLayout) -> egui::Response {
+    let label = egui::Label::new(inline.job.clone())
+        .selectable(true)
+        .wrap_mode(egui::TextWrapMode::Wrap)
+        .sense(if inline.links.is_empty() {
+            egui::Sense::hover()
+        } else {
+            egui::Sense::click()
+        });
+    let (galley_pos, galley, response) = label.layout_in_ui(ui);
+    let hovered_link = hovered_inline_link(&response, galley_pos, &galley, &inline.links);
+    let response = if hovered_link.is_some() {
+        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+    } else {
+        response
+    };
+
+    if ui.is_rect_visible(response.rect) {
+        egui::text_selection::LabelSelectionState::label_text_selection(
+            ui,
+            &response,
+            galley_pos,
+            galley.clone(),
+            ui.visuals().text_color(),
+            egui::Stroke::NONE,
+        );
+
+        if let Some(link) = hovered_link.as_ref() {
+            paint_hovered_link_underline(ui, galley_pos, &galley, &inline.job, link);
+        }
+    }
+
+    if let Some(link) = hovered_link {
+        if response.clicked() || response.middle_clicked() {
+            open_link_destination(ui, &link.destination);
+        }
+    }
+
+    response
+}
+fn ranges_overlap(left: &Range<usize>, right: &Range<usize>) -> bool {
+    left.start < right.end && right.start < left.end
+}
+fn hovered_link_row_ranges(
+    galley: &egui::Galley,
+    link: &InlineLinkSpan,
+) -> Vec<HoveredLinkRowRange> {
+    let mut row_ranges = Vec::new();
+    let mut row_start = 0usize;
+
+    for (row_index, row) in galley.rows.iter().enumerate() {
+        let row_end = row_start + row.char_count_excluding_newline();
+        let hovered_start = row_start.max(link.char_range.start);
+        let hovered_end = row_end.min(link.char_range.end);
+
+        if hovered_start < hovered_end {
+            row_ranges.push(HoveredLinkRowRange {
+                row_index,
+                global_char_range: hovered_start..hovered_end,
+                column_range: (hovered_start - row_start)..(hovered_end - row_start),
+            });
+        }
+
+        row_start = row_end + usize::from(row.ends_with_newline);
+    }
+
+    row_ranges
+}
+fn hovered_link_stroke(layout_job: &egui::text::LayoutJob, link: &InlineLinkSpan) -> egui::Stroke {
+    layout_job
+        .sections
+        .iter()
+        .find(|section| ranges_overlap(&section.byte_range, &link.byte_range))
+        .map(|section| egui::Stroke::new(1.0, section.format.color))
+        .unwrap_or(egui::Stroke::NONE)
+}
+fn paint_hovered_link_underline(
+    ui: &egui::Ui,
+    galley_pos: egui::Pos2,
+    galley: &egui::Galley,
+    layout_job: &egui::text::LayoutJob,
+    link: &InlineLinkSpan,
+) {
+    let stroke = hovered_link_stroke(layout_job, link);
+    if stroke == egui::Stroke::NONE {
+        return;
+    }
+
+    for row_range in hovered_link_row_ranges(galley, link) {
+        let row = &galley.rows[row_range.row_index];
+        let start_x = row.x_offset(row_range.column_range.start);
+        let end_x = row.x_offset(row_range.column_range.end);
+        // Keep the underline inside the row so hover feedback cannot expand
+        // the rendered bounds or disturb surrounding layout.
+        let underline_y = row.max_y() - stroke.width.max(1.0);
+
+        ui.painter().line_segment(
+            [
+                galley_pos + egui::vec2(start_x, underline_y),
+                galley_pos + egui::vec2(end_x, underline_y),
+            ],
+            stroke,
+        );
+    }
+}
+fn hovered_inline_link<'a>(
+    response: &egui::Response,
+    galley_pos: egui::Pos2,
+    galley: &egui::Galley,
+    links: &'a [InlineLinkSpan],
+) -> Option<&'a InlineLinkSpan> {
+    let pointer_pos = response
+        .interact_pointer_pos()
+        .or_else(|| response.hover_pos())?;
+    let cursor = galley.cursor_from_pos(pointer_pos - galley_pos).ccursor;
+    let char_index = cursor.index;
+
+    links
+        .iter()
+        .find(|link| link.char_range.contains(&char_index))
+        .or_else(|| {
+            char_index
+                .checked_sub(1)
+                .and_then(|index| links.iter().find(|link| link.char_range.contains(&index)))
+        })
+}
+pub(crate) fn render_inline_markdown(
+    ui: &mut egui::Ui,
+    content: &str,
+    render_style: InlineRenderStyle,
+    link_defs: &LinkDefinitions,
+) {
+    let nodes = parse_inline_nodes(content, link_defs);
+    render_inline_nodes(ui, &nodes, render_style);
+}
+pub(crate) fn render_inline_nodes(
+    ui: &mut egui::Ui,
+    nodes: &[InlineNode],
+    render_style: InlineRenderStyle,
+) {
+    let mut fragments = Vec::new();
+    let mut next_link_run_id = 0usize;
+    let base_style = WidgetStyle {
+        heading: render_style.heading,
+        strong: render_style.base == InlineBaseStyle::Strong,
+        quote: render_style.quote,
+        ..Default::default()
+    };
+    flatten_inline_nodes(
+        &mut fragments,
+        nodes,
+        &base_style,
+        None,
+        None,
+        &mut next_link_run_id,
+    );
+    render_selectable_inline(ui, build_inline_layout(ui, &fragments));
+}
 #[derive(Clone)]
 struct FlatInlineFragment {
     text: String,
     style: WidgetStyle,
     link: Option<String>,
     link_run_id: Option<usize>,
+}
+fn flatten_inline_nodes(
+    out: &mut Vec<FlatInlineFragment>,
+    nodes: &[InlineNode],
+    style: &WidgetStyle,
+    link: Option<&str>,
+    link_run_id: Option<usize>,
+    next_link_run_id: &mut usize,
+) {
+    for node in nodes {
+        match node {
+            InlineNode::Text(text) | InlineNode::Entity(text) | InlineNode::RawHtml(text) => {
+                out.push(FlatInlineFragment {
+                    text: text.clone(),
+                    style: style.clone(),
+                    link: link.map(str::to_string),
+                    link_run_id,
+                });
+            }
+            InlineNode::Code(text) => {
+                let mut style = style.clone();
+                style.code = true;
+                out.push(FlatInlineFragment {
+                    text: text.clone(),
+                    style,
+                    link: link.map(str::to_string),
+                    link_run_id,
+                });
+            }
+            InlineNode::Emphasis(children) => {
+                let mut style = style.clone();
+                style.emphasis = true;
+                flatten_inline_nodes(out, children, &style, link, link_run_id, next_link_run_id);
+            }
+            InlineNode::Strong(children) => {
+                let mut style = style.clone();
+                style.strong = true;
+                flatten_inline_nodes(out, children, &style, link, link_run_id, next_link_run_id);
+            }
+            InlineNode::Strikethrough(children) => {
+                let mut style = style.clone();
+                style.strikethrough = true;
+                flatten_inline_nodes(out, children, &style, link, link_run_id, next_link_run_id);
+            }
+            InlineNode::Mark(children)
+            | InlineNode::Subscript(children)
+            | InlineNode::Superscript(children) => {
+                flatten_inline_nodes(out, children, style, link, link_run_id, next_link_run_id);
+            }
+            InlineNode::Link { children, url, .. } => {
+                let current_link_run_id = *next_link_run_id;
+                *next_link_run_id += 1;
+                flatten_inline_nodes(
+                    out,
+                    children,
+                    style,
+                    Some(url),
+                    Some(current_link_run_id),
+                    next_link_run_id,
+                );
+            }
+            InlineNode::Image { alt, url, .. } => {
+                let text = if alt.is_empty() {
+                    url.clone()
+                } else {
+                    alt.clone()
+                };
+                out.push(FlatInlineFragment {
+                    text,
+                    style: style.clone(),
+                    link: Some(url.clone()),
+                    link_run_id: Some(*next_link_run_id),
+                });
+                *next_link_run_id += 1;
+            }
+            InlineNode::FootnoteReference(id) => {
+                out.push(FlatInlineFragment {
+                    text: format!("[{id}]"),
+                    style: style.clone(),
+                    link: None,
+                    link_run_id: None,
+                });
+            }
+        }
+    }
 }
