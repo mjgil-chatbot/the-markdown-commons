@@ -20,6 +20,12 @@ pub(crate) fn heading_font_size(ui: &egui::Ui, level: u8) -> f32 {
         _ => min_height + diff * 0.167,
     }
 }
+
 pub(crate) fn height_body(ui: &egui::Ui) -> f32 {
     ui.text_style_height(&egui::TextStyle::Body)
+}
+
+pub(crate) fn width_body_space(ui: &egui::Ui) -> f32 {
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    ui.fonts(|fonts| fonts.glyph_width(&font_id, ' '))
 }
