@@ -261,6 +261,39 @@ fn render_code_block(
             });
     });
 }
+fn render_table(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str) {
+    let num_cols = table.headers.len();
+    if num_cols == 0 {
+        return;
+    }
+
+    let outer_width = ui.available_width();
+    ui.allocate_ui(egui::vec2(outer_width, 0.0), |ui| {
+        ui.set_width(outer_width);
+        ui.set_min_width(outer_width);
+        ui.set_max_width(outer_width);
+
+        egui::Frame::group(ui.style()).show(ui, |ui| {
+            let frame_width = ui.available_width();
+            ui.set_min_width(frame_width);
+            ui.set_max_width(frame_width);
+
+            let col_widths = calculate_column_widths(table, ui, frame_width);
+            let total_width: f32 = col_widths.iter().sum::<f32>() + (num_cols as f32 * 8.0);
+
+            if total_width > frame_width {
+                egui::ScrollArea::horizontal()
+                    .max_width(frame_width)
+                    .id_salt(format!("{}_scroll", id_salt))
+                    .show(ui, |ui| {
+                        render_table_grid(ui, table, id_salt, &col_widths);
+                    });
+            } else {
+                render_table_grid(ui, table, id_salt, &col_widths);
+            }
+        });
+    });
+}
 fn render_table_grid(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str, col_widths: &[f32]) {
     let num_cols = table.headers.len();
 
