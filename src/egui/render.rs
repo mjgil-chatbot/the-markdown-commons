@@ -333,3 +333,57 @@ pub(crate) fn count_emoji(s: &str) -> usize {
         })
         .count()
 }
+fn calculate_text_width_with_code(text: &str, ui: &egui::Ui) -> f32 {
+    let body_font = egui::TextStyle::Body.resolve(ui.style());
+    let mono_font = egui::TextStyle::Monospace.resolve(ui.style());
+    let mut total_width: f32 = 0.0;
+    let mut remaining = text;
+
+    while !remaining.is_empty() {
+        if let Some(start) = remaining.find('`') {
+            if start > 0 {
+                let before = &remaining[..start];
+                let galley = ui.fonts(|fonts| {
+                    fonts.layout_no_wrap(
+                        before.to_string(),
+                        body_font.clone(),
+                        egui::Color32::WHITE,
+                    )
+                });
+                total_width += galley.rect.width();
+            }
+
+            let after_start = &remaining[start + 1..];
+            if let Some(end) = after_start.find('`') {
+                let code = &after_start[..end];
+                let galley = ui.fonts(|fonts| {
+                    fonts.layout_no_wrap(code.to_string(), mono_font.clone(), egui::Color32::WHITE)
+                });
+                total_width += galley.rect.width() + 10.0;
+                remaining = &after_start[end + 1..];
+            } else {
+                let galley = ui.fonts(|fonts| {
+                    fonts.layout_no_wrap(
+                        remaining[start..].to_string(),
+                        body_font.clone(),
+                        egui::Color32::WHITE,
+                    )
+                });
+                total_width += galley.rect.width();
+                break;
+            }
+        } else {
+            let galley = ui.fonts(|fonts| {
+                fonts.layout_no_wrap(
+                    remaining.to_string(),
+                    body_font.clone(),
+                    egui::Color32::WHITE,
+                )
+            });
+            total_width += galley.rect.width();
+            break;
+        }
+    }
+
+    total_width
+}
