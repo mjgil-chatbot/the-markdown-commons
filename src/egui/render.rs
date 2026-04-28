@@ -387,3 +387,62 @@ fn calculate_text_width_with_code(text: &str, ui: &egui::Ui) -> f32 {
 
     total_width
 }
+fn calculate_column_widths(table: &MarkdownTable, ui: &egui::Ui, available_width: f32) -> Vec<f32> {
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    let mut widths: Vec<f32> = vec![0.0; table.headers.len()];
+
+    for (i, header) in table.headers.iter().enumerate() {
+        let header_text = header.source_text();
+        let galley = ui.fonts(|fonts| {
+            fonts.layout_no_wrap(
+                header_text.to_string(),
+                font_id.clone(),
+                egui::Color32::WHITE,
+            )
+        });
+        let emoji_count = count_emoji(header_text);
+        let emoji_extra = emoji_count as f32 * 10.0;
+        widths[i] = widths[i].max(galley.rect.width() + 24.0 + emoji_extra);
+    }
+
+    for row in &table.rows {
+        for (i, cell) in row.iter().enumerate() {
+            if i < widths.len() {
+                let cell_text = cell.source_text();
+                let text_width = if cell_text.contains('`') {
+                    calculate_text_width_with_code(cell_text, ui)
+                } else {
+                    let galley = ui.fonts(|fonts| {
+                        fonts.layout_no_wrap(
+                            cell_text.to_string(),
+                            font_id.clone(),
+                            egui::Color32::WHITE,
+                        )
+                    });
+                    galley.rect.width()
+                };
+
+                let emoji_count = count_emoji(cell_text);
+                let emoji_extra = emoji_count as f32 * 10.0;
+                widths[i] = widths[i].max(text_width + 24.0 + emoji_extra);
+            }
+        }
+    }
+
+    for width in &mut widths {
+        *width = width.min(400.0).max(80.0);
+    }
+
+    let num_cols = widths.len().max(1);
+    let spacing_total = num_cols as f32 * 8.0;
+    let available_for_columns = (available_width - spacing_total).max(0.0);
+    let total_width: f32 = widths.iter().sum();
+    if total_width > 0.0 && total_width < available_for_columns {
+        let scale = available_for_columns / total_width;
+        for width in &mut widths {
+            *width *= scale;
+        }
+    }
+
+    widths
+}
