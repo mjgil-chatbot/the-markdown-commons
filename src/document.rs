@@ -1,6 +1,7 @@
 use crate::common::Alignment;
 use crate::inline::InlineNode;
 use std::collections::{HashMap, VecDeque};
+use self::cache::{insert_cached_document, touch_cache_order};
 mod cache;
 mod markdownish;
 mod parse_support;
@@ -646,6 +647,59 @@ pub struct DocumentCache {
     full_document_bytes: usize,
     fragment_document_bytes: usize,
 }
+impl DocumentCache {
+    /// Parse a full markdown document, using the cache when possible.
+    ///
+    /// Full documents are cached separately from fragments. Footnotes are
+    /// only rendered for full documents.
+    pub fn parse_document(&mut self, input: &str) -> MarkdownDocument {
+        if let Some(document) = self.full_documents.get(input).cloned() {
+            touch_cache_order(&mut self.full_order, input);
+            return document;
+        }
+
+        let document = parse::parse_document(input);
+        insert_cached_document(
+            &mut self.full_documents,
+            &mut self.full_order,
+            &mut self.full_document_bytes,
+            input,
+            &document,
+        );
+        document
+    }
+
+    /// Parse a markdown fragment, using the cache when possible.
+    ///
+    /// Fragments are cached separately from full documents and do not
+    /// render footnote sections.
+    pub fn parse_document_fragment(&mut self, input: &str) -> MarkdownDocument {
+        if let Some(document) = self.fragment_documents.get(input).cloned() {
+            touch_cache_order(&mut self.fragment_order, input);
+            return document;
+        }
+
+        let document = parse::parse_document_fragment(input);
+        insert_cached_document(
+            &mut self.fragment_documents,
+            &mut self.fragment_order,
+            &mut self.fragment_document_bytes,
+            input,
+            &document,
+        );
+        document
+    }
+
+    /// Clear all cached documents and fragments, freeing memory.
+    pub fn clear(&mut self) {
+        self.full_documents.clear();
+        self.fragment_documents.clear();
+        self.full_order.clear();
+        self.fragment_order.clear();
+        self.full_document_bytes = 0;
+        self.fragment_document_bytes = 0;
+    }
+}
 /// The top-level block-level nodes in a parsed markdown document.
 ///
 /// Each variant represents a different markdown construct. Use `matches!` or
@@ -762,4 +816,12 @@ pub fn parse_document(input: &str) -> MarkdownDocument {
 /// Parse a markdown fragment into a [`MarkdownDocument`] without footnote extraction.
 pub fn parse_document_fragment(input: &str) -> MarkdownDocument {
     parse::parse_document_fragment(input)
+}
+/// Parse a full document with caching via [`DocumentCache`].
+pub fn parse_document_cached(cache: &mut DocumentCache, input: &str) -> MarkdownDocument {
+    cache.parse_document(input)
+}
+/// Parse a fragment with caching via [`DocumentCache`].
+pub fn parse_document_fragment_cached(cache: &mut DocumentCache, input: &str) -> MarkdownDocument {
+    cache.parse_document_fragment(input)
 }
