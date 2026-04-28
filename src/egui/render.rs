@@ -2,9 +2,11 @@ use super::inline::{
     render_inline_markdown, render_inline_nodes, InlineBaseStyle, InlineRenderStyle,
 };
 use super::MarkdownTable;
+use crate::common;
 use crate::document::Block;
 use crate::document::InlineContent;
 use crate::document::ParagraphBlock;
+use crate::document::TableBlock;
 use crate::inline::InlineNode;
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 trait TableCellContent {
@@ -260,6 +262,36 @@ fn render_code_block(
                 }
             });
     });
+}
+fn render_table_from_block(ui: &mut egui::Ui, table: &TableBlock, id_salt: &str) {
+    render_table(
+        ui,
+        &MarkdownTable {
+            headers: table
+                .headers
+                .iter()
+                .map(|header| FromInlineContentCell::from_inline_content(header))
+                .collect(),
+            alignments: table
+                .alignments
+                .iter()
+                .copied()
+                .map(|alignment: Option<common::Alignment>| {
+                    alignment.unwrap_or(common::Alignment::Left)
+                })
+                .collect(),
+            rows: table
+                .rows
+                .iter()
+                .map(|row| {
+                    row.iter()
+                        .map(|cell| FromInlineContentCell::from_inline_content(cell))
+                        .collect()
+                })
+                .collect(),
+        },
+        id_salt,
+    );
 }
 fn render_table(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str) {
     let num_cols = table.headers.len();
