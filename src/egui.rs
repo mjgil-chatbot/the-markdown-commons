@@ -14,6 +14,7 @@ mod lists;
 #[cfg(test)]
 mod parse;
 mod render;
+mod segments;
 mod style;
 #[allow(unused_imports)]
 use crate::common::{self, Alignment};
