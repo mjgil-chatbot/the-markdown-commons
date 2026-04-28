@@ -13,6 +13,7 @@ mod inline;
 mod lists;
 #[cfg(test)]
 mod parse;
+mod render;
 mod style;
 #[allow(unused_imports)]
 use crate::common::{self, Alignment};
