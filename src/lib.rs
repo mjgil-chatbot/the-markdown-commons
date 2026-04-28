@@ -8,5 +8,11 @@ mod common;
 pub mod document;
 pub mod inline;
 mod parse_util;
+pub mod html;
+pub use html::{
+    parse_markdown, parse_markdown_cached, parse_markdown_fragment, parse_markdown_fragment_cached,
+    parse_markdown_fragment_with_options, parse_markdown_fragment_with_options_cached,
+    parse_markdown_with_options, parse_markdown_with_options_cached, HtmlOptions,
+};
 #[cfg(feature = "egui")]
 pub mod egui;
