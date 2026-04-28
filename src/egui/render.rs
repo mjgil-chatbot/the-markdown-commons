@@ -143,3 +143,120 @@ fn render_paragraph(ui: &mut egui::Ui, text: &str, quote: bool) {
         &Default::default(),
     );
 }
+fn render_code_block(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    language: Option<&str>,
+    code: &str,
+    options: &MarkdownRenderOptions<'_>,
+) {
+    let outer_width = ui.available_width();
+    let inner_width = (outer_width - 16.0).max(0.0);
+    let theme = CodeTheme::from_style(ui.style());
+    let mono_font = egui::TextStyle::Monospace.resolve(ui.style());
+    let code_line_height = mono_font.size * 1.6;
+    // Apply caller-provided overrides, then fall back to the default.
+    let effective_language = match language {
+        Some(tag) => options
+            .code_language_overrides
+            .iter()
+            .find(|(from, _)| *from == tag)
+            .map(|(_, to)| *to)
+            .unwrap_or(tag),
+        None => options.default_code_language.unwrap_or(""),
+    };
+    let wrap_json = effective_language == "json";
+    let trimmed_code = code.strip_suffix('\n').unwrap_or(code);
+    let mut job = syntax_highlighting::highlight(
+        ui.ctx(),
+        ui.style(),
+        &theme,
+        trimmed_code,
+        effective_language,
+    );
+    job.wrap.max_width = if wrap_json {
+        inner_width
+    } else {
+        f32::INFINITY
+    };
+    for section in &mut job.sections {
+        section.format.line_height = Some(code_line_height);
+    }
+
+    ui.allocate_ui(egui::vec2(outer_width, 0.0), |ui| {
+        ui.set_width(outer_width);
+        ui.set_min_width(outer_width);
+        ui.set_max_width(outer_width);
+
+        egui::Frame::none()
+            .fill(ui.visuals().extreme_bg_color)
+            .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+            .rounding(ui.style().noninteractive().rounding)
+            .inner_margin(egui::Margin::same(8.0))
+            .show(ui, |ui| {
+                let frame_width = ui.available_width();
+                let frame_rect = ui.max_rect();
+                ui.set_min_width(frame_width);
+                ui.set_max_width(frame_width);
+
+                if wrap_json {
+                    ui.add(
+                        egui::Label::new(job.clone())
+                            .selectable(true)
+                            .wrap_mode(egui::TextWrapMode::Wrap),
+                    );
+                } else {
+                    egui::ScrollArea::horizontal()
+                        .max_width(frame_width)
+                        .id_salt(format!("{}_scroll", id_salt))
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::Label::new(job.clone())
+                                    .selectable(true)
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                            );
+                        });
+                }
+
+                let spacing = &ui.style().spacing;
+                let button_position = egui::pos2(
+                    frame_rect.right_top().x - spacing.icon_width * 0.5 - spacing.button_padding.x,
+                    frame_rect.right_top().y + spacing.button_padding.y * 2.0,
+                );
+                let persistent_id = ui.make_persistent_id(format!("{}_copy_button", id_salt));
+                let copied_icon = ui.memory_mut(|memory| {
+                    *memory.data.get_temp_mut_or_default::<bool>(persistent_id)
+                });
+                let copy_button = ui
+                    .put(
+                        egui::Rect {
+                            min: button_position,
+                            max: button_position,
+                        },
+                        egui::Button::new(if copied_icon { "✔" } else { "🗐" })
+                            .small()
+                            .frame(false)
+                            .fill(egui::Color32::TRANSPARENT),
+                    )
+                    .on_hover_cursor(
+                        ui.visuals()
+                            .interact_cursor
+                            .unwrap_or(egui::CursorIcon::Default),
+                    );
+
+                if copied_icon && !copy_button.hovered() {
+                    ui.memory_mut(|memory| {
+                        *memory.data.get_temp_mut_or_default(persistent_id) = false;
+                    });
+                }
+                if !copied_icon && copy_button.clicked() {
+                    ui.memory_mut(|memory| {
+                        *memory.data.get_temp_mut_or_default(persistent_id) = true;
+                    });
+                }
+                if copy_button.clicked() {
+                    ui.ctx().copy_text(trimmed_code.to_owned());
+                }
+            });
+    });
+}
