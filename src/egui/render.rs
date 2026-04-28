@@ -1,3 +1,4 @@
+use crate::document::Block;
 use crate::document::InlineContent;
 use crate::inline::InlineNode;
 use egui_extras::syntax_highlighting::{self, CodeTheme};
@@ -45,4 +46,29 @@ pub struct MarkdownRenderOptions<'a> {
     /// For example, `&[("text", "sh"), ("txt", "sh")]` treats ````text`
     /// blocks as shell. Entries are checked before syntect receives the tag.
     pub code_language_overrides: &'a [(&'a str, &'a str)],
+}
+fn collect_unordered_list_continuation(
+    blocks: &[Block],
+    start_index: usize,
+    current_indent: usize,
+) -> (&[Block], Option<usize>, usize) {
+    let mut index = start_index;
+
+    while index < blocks.len() {
+        match &blocks[index] {
+            Block::UnorderedList(list) if list.indent == current_indent => {
+                return (&blocks[start_index..index], Some(index), index);
+            }
+            Block::UnorderedList(list) if list.indent > current_indent => index += 1,
+            Block::OrderedList(list) if list.indent > current_indent => index += 1,
+            Block::Paragraph(_) | Block::Heading(_) | Block::HorizontalRule => break,
+            Block::UnorderedList(_) | Block::OrderedList(_) => break,
+            _ => break,
+        }
+    }
+
+    (&blocks[start_index..index], None, index)
+}
+fn is_section_label_paragraph(nodes: &[InlineNode]) -> bool {
+    matches!(nodes, [InlineNode::Strong(children)] if matches!(children.as_slice(), [InlineNode::Text(_)]))
 }
