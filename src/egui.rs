@@ -11,6 +11,8 @@ mod headless_layout_tests;
 mod headless_tests;
 mod inline;
 mod lists;
+#[cfg(test)]
+mod parse;
 mod style;
 #[allow(unused_imports)]
 use crate::common::{self, Alignment};
