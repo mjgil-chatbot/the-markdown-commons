@@ -260,3 +260,29 @@ fn render_code_block(
             });
     });
 }
+fn with_table_cell_ui(ui: &mut egui::Ui, width: f32, render: impl FnOnce(&mut egui::Ui)) {
+    ui.scope(|ui| {
+        ui.set_width(width);
+        ui.set_min_width(width);
+        ui.set_max_width(width);
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Wrap);
+        render(ui);
+    });
+}
+fn render_cell_markdown<T: TableCellContent>(ui: &mut egui::Ui, content: &T, is_header: bool) {
+    let render_style = InlineRenderStyle {
+        base: if is_header {
+            InlineBaseStyle::Strong
+        } else {
+            InlineBaseStyle::Normal
+        },
+        heading: None,
+        quote: false,
+    };
+
+    if let Some(nodes) = content.inline_nodes() {
+        render_inline_nodes(ui, nodes, render_style);
+    } else {
+        render_inline_markdown(ui, content.source_text(), render_style, &Default::default());
+    }
+}
