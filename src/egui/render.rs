@@ -1,6 +1,7 @@
 use super::inline::{
     render_inline_markdown, render_inline_nodes, InlineBaseStyle, InlineRenderStyle,
 };
+use super::MarkdownTable;
 use crate::document::Block;
 use crate::document::InlineContent;
 use crate::document::ParagraphBlock;
@@ -260,6 +261,39 @@ fn render_code_block(
             });
     });
 }
+fn render_table_grid(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str, col_widths: &[f32]) {
+    let num_cols = table.headers.len();
+
+    egui::Grid::new(id_salt)
+        .num_columns(num_cols)
+        .spacing([8.0, 4.0])
+        .striped(true)
+        .min_col_width(80.0)
+        .show(ui, |ui| {
+            for (i, header) in table.headers.iter().enumerate() {
+                let cell_width = col_widths.get(i).copied().unwrap_or(80.0);
+                with_table_cell_ui(ui, cell_width, |ui| {
+                    render_cell_markdown(ui, header, true);
+                });
+            }
+            ui.end_row();
+
+            for _ in 0..num_cols {
+                ui.separator();
+            }
+            ui.end_row();
+
+            for row in &table.rows {
+                for (col_idx, cell) in row.iter().enumerate() {
+                    let cell_width = col_widths.get(col_idx).copied().unwrap_or(80.0);
+                    with_table_cell_ui(ui, cell_width, |ui| {
+                        render_cell_markdown(ui, cell, false);
+                    });
+                }
+                ui.end_row();
+            }
+        });
+}
 fn with_table_cell_ui(ui: &mut egui::Ui, width: f32, render: impl FnOnce(&mut egui::Ui)) {
     ui.scope(|ui| {
         ui.set_width(width);
@@ -285,4 +319,17 @@ fn render_cell_markdown<T: TableCellContent>(ui: &mut egui::Ui, content: &T, is_
     } else {
         render_inline_markdown(ui, content.source_text(), render_style, &Default::default());
     }
+}
+pub(crate) fn count_emoji(s: &str) -> usize {
+    s.chars()
+        .filter(|c| {
+            let c = *c as u32;
+            (0x1F300..=0x1F9FF).contains(&c)
+                || (0x2600..=0x26FF).contains(&c)
+                || (0x2700..=0x27BF).contains(&c)
+                || (0x2300..=0x23FF).contains(&c)
+                || c == 0x2705
+                || c == 0x274C
+        })
+        .count()
 }
