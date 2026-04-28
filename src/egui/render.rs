@@ -1,5 +1,9 @@
+use super::inline::{
+    render_inline_markdown, render_inline_nodes, InlineBaseStyle, InlineRenderStyle,
+};
 use crate::document::Block;
 use crate::document::InlineContent;
+use crate::document::ParagraphBlock;
 use crate::inline::InlineNode;
 use egui_extras::syntax_highlighting::{self, CodeTheme};
 trait TableCellContent {
@@ -97,4 +101,45 @@ fn collect_unordered_list_continuation(
 }
 fn is_section_label_paragraph(nodes: &[InlineNode]) -> bool {
     matches!(nodes, [InlineNode::Strong(children)] if matches!(children.as_slice(), [InlineNode::Text(_)]))
+}
+fn render_paragraph_block(ui: &mut egui::Ui, paragraph: &ParagraphBlock, quote: bool) {
+    render_inline_nodes(
+        ui,
+        &paragraph.content.nodes,
+        InlineRenderStyle {
+            base: InlineBaseStyle::Normal,
+            heading: None,
+            quote,
+        },
+    );
+}
+fn render_heading(
+    ui: &mut egui::Ui,
+    level: usize,
+    nodes: &[crate::inline::InlineNode],
+    quote: bool,
+) {
+    let heading_level = (level.saturating_sub(1)).min(5) as u8;
+    render_inline_nodes(
+        ui,
+        nodes,
+        InlineRenderStyle {
+            base: InlineBaseStyle::Normal,
+            heading: Some(heading_level),
+            quote,
+        },
+    );
+}
+#[allow(dead_code)]
+fn render_paragraph(ui: &mut egui::Ui, text: &str, quote: bool) {
+    render_inline_markdown(
+        ui,
+        text,
+        InlineRenderStyle {
+            base: InlineBaseStyle::Normal,
+            heading: None,
+            quote,
+        },
+        &Default::default(),
+    );
 }
