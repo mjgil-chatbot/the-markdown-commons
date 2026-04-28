@@ -1,10 +1,13 @@
 use crate::common::Alignment;
 use crate::inline::InlineNode;
 use std::collections::{HashMap, VecDeque};
+
 use self::cache::{insert_cached_document, touch_cache_order};
+
 mod cache;
 mod markdownish;
 mod parse_support;
+
 pub(crate) mod parse {
     use crate::common;
     use crate::inline::{parse_inline_nodes, LinkDefinitions};
@@ -588,6 +591,7 @@ pub(crate) mod parse {
             .count()
     }
 }
+
 /// A fully parsed markdown document, ready for rendering.
 ///
 /// `MarkdownDocument` is the shared intermediate representation produced by the
@@ -614,6 +618,7 @@ pub struct MarkdownDocument {
     /// All link reference definitions found in the document.
     pub references: Vec<LinkReferenceDefinition>,
 }
+
 /// A cache for parsed markdown documents that avoids re-parsing the same content.
 ///
 /// `DocumentCache` stores parsed documents keyed by their input text. When
@@ -647,6 +652,7 @@ pub struct DocumentCache {
     full_document_bytes: usize,
     fragment_document_bytes: usize,
 }
+
 impl DocumentCache {
     /// Parse a full markdown document, using the cache when possible.
     ///
@@ -700,6 +706,7 @@ impl DocumentCache {
         self.fragment_document_bytes = 0;
     }
 }
+
 /// The top-level block-level nodes in a parsed markdown document.
 ///
 /// Each variant represents a different markdown construct. Use `matches!` or
@@ -740,88 +747,108 @@ pub enum Block {
     /// A horizontal rule separator.
     HorizontalRule,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnorderedListBlock {
     pub indent: usize,
     pub items: Vec<ListItem>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OrderedListBlock {
     pub start: usize,
     pub indent: usize,
     pub items: Vec<ListItem>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParagraphBlock {
     pub lines: Vec<ParagraphLine>,
     pub content: InlineContent,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParagraphLine {
     pub content: InlineContent,
     pub hard_break: bool,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HeadingBlock {
     pub level: usize,
     pub content: InlineContent,
     pub id: Option<String>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeBlock {
     pub language: Option<String>,
     pub code: String,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TableBlock {
     pub headers: Vec<InlineContent>,
     pub alignments: Vec<Option<Alignment>>,
     pub rows: Vec<Vec<InlineContent>>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DefinitionItem {
     pub term: InlineContent,
     pub definitions: Vec<InlineContent>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TaskItem {
     pub checked: bool,
     pub content: InlineContent,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ListItem {
     pub content: InlineContent,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineContent {
     pub source: String,
     pub nodes: Vec<InlineNode>,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FootnoteDefinition {
     pub id: String,
     pub content: String,
 }
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LinkReferenceDefinition {
     pub label: String,
     pub url: String,
     pub title: Option<String>,
 }
+
 /// Parse markdown input into a [`MarkdownDocument`] with block-level structure,
 /// inline content, footnotes, and link reference definitions.
 pub fn parse_document(input: &str) -> MarkdownDocument {
     parse::parse_document(input)
 }
+
 /// Parse a markdown fragment into a [`MarkdownDocument`] without footnote extraction.
 pub fn parse_document_fragment(input: &str) -> MarkdownDocument {
     parse::parse_document_fragment(input)
 }
+
 /// Parse a full document with caching via [`DocumentCache`].
 pub fn parse_document_cached(cache: &mut DocumentCache, input: &str) -> MarkdownDocument {
     cache.parse_document(input)
 }
+
 /// Parse a fragment with caching via [`DocumentCache`].
 pub fn parse_document_fragment_cached(cache: &mut DocumentCache, input: &str) -> MarkdownDocument {
     cache.parse_document_fragment(input)
 }
+
+#[cfg(test)]
+mod tests;
