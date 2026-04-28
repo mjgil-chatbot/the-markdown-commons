@@ -1,14 +1,15 @@
 use super::inline::{
     render_inline_markdown, render_inline_nodes, InlineBaseStyle, InlineRenderStyle,
 };
-use super::MarkdownTable;
+use super::lists::{render_definition_list, render_document_list, render_task_list};
+use super::{MarkdownCache, MarkdownTable};
 use crate::common;
-use crate::document::Block;
-use crate::document::InlineContent;
-use crate::document::ParagraphBlock;
-use crate::document::TableBlock;
+use crate::document::{
+    Block, InlineContent, OrderedListBlock, ParagraphBlock, TableBlock, UnorderedListBlock,
+};
 use crate::inline::InlineNode;
 use egui_extras::syntax_highlighting::{self, CodeTheme};
+
 trait TableCellContent {
     fn source_text(&self) -> &str;
 
@@ -16,11 +17,13 @@ trait TableCellContent {
         None
     }
 }
+
 impl TableCellContent for String {
     fn source_text(&self) -> &str {
         self
     }
 }
+
 impl TableCellContent for InlineContent {
     fn source_text(&self) -> &str {
         &self.source
@@ -30,19 +33,23 @@ impl TableCellContent for InlineContent {
         Some(&self.nodes)
     }
 }
+
 trait FromInlineContentCell: Sized {
     fn from_inline_content(content: &InlineContent) -> Self;
 }
+
 impl FromInlineContentCell for String {
     fn from_inline_content(content: &InlineContent) -> Self {
         content.source.clone()
     }
 }
+
 impl FromInlineContentCell for InlineContent {
     fn from_inline_content(content: &InlineContent) -> Self {
         content.clone()
     }
 }
+
 /// Options for markdown rendering.
 #[derive(Default, Clone, Debug)]
 pub struct MarkdownRenderOptions<'a> {
@@ -54,6 +61,262 @@ pub struct MarkdownRenderOptions<'a> {
     /// blocks as shell. Entries are checked before syntect receives the tag.
     pub code_language_overrides: &'a [(&'a str, &'a str)],
 }
+
+/// Render markdown content into an egui UI.
+///
+/// This is a convenience wrapper around [`render_markdown_with_options`] with
+/// default rendering options.
+///
+/// - `ui`: the egui UI to render into
+/// - `cache`: a reusable cache to avoid re-parsing the same content
+/// - `content`: the markdown text to render
+/// - `id_salt`: a unique ID for this render instance (used for egui state)
+///
+/// # Example
+///
+/// ```
+/// use tmc::{egui::{render_markdown, MarkdownCache}, Ui};
+///
+/// fn render_markdown_content(ui: &mut Ui, cache: &mut MarkdownCache, text: &str) {
+///     render_markdown(ui, cache, text, "my-content");
+/// }
+/// ```
+pub fn render_markdown(ui: &mut egui::Ui, cache: &mut MarkdownCache, content: &str, id_salt: &str) {
+    render_markdown_with_options(
+        ui,
+        cache,
+        content,
+        id_salt,
+        &MarkdownRenderOptions::default(),
+    );
+}
+
+/// Render markdown content into an egui UI with custom rendering options.
+///
+/// See [`MarkdownRenderOptions`] for available options.
+pub fn render_markdown_with_options(
+    ui: &mut egui::Ui,
+    cache: &mut MarkdownCache,
+    content: &str,
+    id_salt: &str,
+    options: &MarkdownRenderOptions<'_>,
+) {
+    let normalized = common::normalize_fenced_code_languages(content);
+    let document = cache.document_cache.parse_document_fragment(&normalized);
+    let max_width = ui.available_width();
+    let child_max_y = ui.cursor().top() + 100_000.0;
+    let child_rect = egui::Rect::from_min_max(
+        ui.cursor().left_top(),
+        egui::pos2(ui.cursor().left_top().x + max_width, child_max_y),
+    );
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(id_salt)
+            .max_rect(child_rect)
+            .layout(*ui.layout()),
+    );
+    child.set_clip_rect(ui.clip_rect().intersect(child_rect));
+    child.set_min_width(max_width);
+    child.set_max_width(max_width);
+
+    render_document_blocks(&mut child, &document.blocks, id_salt, false, options);
+
+    let used = child.min_rect();
+    if used.is_positive() {
+        let mut size = used.size();
+        size.x = size.x.min(max_width);
+        let final_rect = egui::Rect::from_min_size(child_rect.min, size);
+        ui.advance_cursor_after_rect(final_rect);
+    }
+}
+
+fn render_document_blocks(
+    ui: &mut egui::Ui,
+    blocks: &[Block],
+    id_salt: &str,
+    quote: bool,
+    options: &MarkdownRenderOptions<'_>,
+) {
+    let mut idx = 0;
+    while idx < blocks.len() {
+        if let Block::UnorderedList(list) = &blocks[idx] {
+            idx = render_unordered_list_sequence(ui, blocks, idx, list, id_salt, quote, options);
+            continue;
+        }
+        if let Block::OrderedList(list) = &blocks[idx] {
+            idx = render_ordered_list_sequence(ui, blocks, idx, list, id_salt, quote, options);
+            continue;
+        }
+
+        render_single_block(ui, &blocks[idx], idx, id_salt, quote, options);
+        idx += 1;
+    }
+}
+
+fn render_single_block(
+    ui: &mut egui::Ui,
+    block: &Block,
+    idx: usize,
+    id_salt: &str,
+    quote: bool,
+    options: &MarkdownRenderOptions<'_>,
+) {
+    match block {
+        Block::Paragraph(paragraph) => {
+            render_paragraph_block(ui, paragraph, quote);
+            ui.add_space(8.0);
+        }
+        Block::Heading(heading) => {
+            render_heading(ui, heading.level, &heading.content.nodes, quote);
+            ui.add_space(6.0);
+        }
+        Block::CodeBlock(code) => {
+            render_code_block(
+                ui,
+                &format!("{}_code_{}", id_salt, idx),
+                code.language.as_deref(),
+                &code.code,
+                options,
+            );
+            ui.add_space(8.0);
+        }
+        Block::Table(table) => {
+            render_table_from_block(ui, table, &format!("{}_{}", id_salt, idx));
+            ui.add_space(8.0);
+        }
+        Block::BlockQuote(inner) => {
+            render_blockquote_blocks(ui, inner, &format!("{}_quote_{}", id_salt, idx), options);
+            ui.add_space(8.0);
+        }
+        Block::DefinitionList(items) => {
+            render_definition_list(ui, items, quote);
+            ui.add_space(6.0);
+        }
+        Block::TaskList(items) => {
+            render_task_list(ui, items);
+            ui.add_space(6.0);
+        }
+        Block::UnorderedList(list) => {
+            render_document_list(ui, &list.items, None);
+            ui.add_space(6.0);
+        }
+        Block::OrderedList(list) => {
+            render_document_list(ui, &list.items, Some(list.start));
+            ui.add_space(6.0);
+        }
+        Block::HorizontalRule => {
+            ui.separator();
+            ui.add_space(6.0);
+        }
+    }
+}
+
+fn render_list_continuation(
+    ui: &mut egui::Ui,
+    continuation_blocks: &[Block],
+    start_index: usize,
+    id_salt: &str,
+    quote: bool,
+    options: &MarkdownRenderOptions<'_>,
+) {
+    let continuation_spacing = if matches!(
+        continuation_blocks.first(),
+        Some(Block::UnorderedList(_) | Block::OrderedList(_))
+    ) {
+        1.0
+    } else {
+        8.0
+    };
+    ui.add_space(continuation_spacing);
+    egui::Frame::none()
+        .outer_margin(egui::Margin {
+            left: 18.0,
+            ..Default::default()
+        })
+        .show(ui, |ui| {
+            for (offset, block) in continuation_blocks.iter().enumerate() {
+                render_single_block(ui, block, start_index + offset, id_salt, quote, options);
+            }
+        });
+}
+
+fn render_unordered_list_sequence(
+    ui: &mut egui::Ui,
+    blocks: &[Block],
+    start_index: usize,
+    first_list: &UnorderedListBlock,
+    id_salt: &str,
+    quote: bool,
+    options: &MarkdownRenderOptions<'_>,
+) -> usize {
+    let mut current_list = first_list;
+    let mut index = start_index;
+
+    loop {
+        render_document_list(ui, &current_list.items, None);
+        let (continuation_blocks, next_unordered_index, next_index_after_continuation) =
+            collect_unordered_list_continuation(blocks, index + 1, current_list.indent);
+
+        if !continuation_blocks.is_empty() {
+            render_list_continuation(ui, continuation_blocks, index + 1, id_salt, quote, options);
+        }
+
+        if let Some(next_unordered_index) = next_unordered_index {
+            index = next_unordered_index;
+            let Block::UnorderedList(next_list) = &blocks[index] else {
+                unreachable!("unordered list continuation index must point to unordered list");
+            };
+            current_list = next_list;
+            continue;
+        }
+
+        ui.add_space(6.0);
+        return next_index_after_continuation;
+    }
+}
+
+fn render_ordered_list_sequence(
+    ui: &mut egui::Ui,
+    blocks: &[Block],
+    start_index: usize,
+    first_list: &OrderedListBlock,
+    id_salt: &str,
+    quote: bool,
+    options: &MarkdownRenderOptions<'_>,
+) -> usize {
+    let mut current_list = first_list;
+    let mut index = start_index;
+
+    loop {
+        render_document_list(ui, &current_list.items, Some(current_list.start));
+        let expected_next_start = current_list.start + current_list.items.len();
+
+        let (continuation_blocks, next_ordered_index, next_index_after_continuation) =
+            collect_ordered_list_continuation(
+                blocks,
+                index + 1,
+                current_list.indent,
+                expected_next_start,
+            );
+
+        if !continuation_blocks.is_empty() {
+            render_list_continuation(ui, continuation_blocks, index + 1, id_salt, quote, options);
+        }
+
+        if let Some(next_ordered_index) = next_ordered_index {
+            index = next_ordered_index;
+            let Block::OrderedList(next_list) = &blocks[index] else {
+                unreachable!("ordered list continuation index must point to ordered list");
+            };
+            current_list = next_list;
+            continue;
+        }
+
+        ui.add_space(6.0);
+        return next_index_after_continuation;
+    }
+}
+
 fn collect_ordered_list_continuation(
     blocks: &[Block],
     start_index: usize,
@@ -80,6 +343,7 @@ fn collect_ordered_list_continuation(
 
     (&blocks[start_index..index], None, index)
 }
+
 fn collect_unordered_list_continuation(
     blocks: &[Block],
     start_index: usize,
@@ -102,9 +366,11 @@ fn collect_unordered_list_continuation(
 
     (&blocks[start_index..index], None, index)
 }
+
 fn is_section_label_paragraph(nodes: &[InlineNode]) -> bool {
     matches!(nodes, [InlineNode::Strong(children)] if matches!(children.as_slice(), [InlineNode::Text(_)]))
 }
+
 fn render_paragraph_block(ui: &mut egui::Ui, paragraph: &ParagraphBlock, quote: bool) {
     render_inline_nodes(
         ui,
@@ -116,6 +382,7 @@ fn render_paragraph_block(ui: &mut egui::Ui, paragraph: &ParagraphBlock, quote: 
         },
     );
 }
+
 fn render_heading(
     ui: &mut egui::Ui,
     level: usize,
@@ -133,6 +400,7 @@ fn render_heading(
         },
     );
 }
+
 #[allow(dead_code)]
 fn render_paragraph(ui: &mut egui::Ui, text: &str, quote: bool) {
     render_inline_markdown(
@@ -146,6 +414,39 @@ fn render_paragraph(ui: &mut egui::Ui, text: &str, quote: bool) {
         &Default::default(),
     );
 }
+
+fn render_blockquote_blocks(
+    ui: &mut egui::Ui,
+    blocks: &[Block],
+    id_salt: &str,
+    options: &MarkdownRenderOptions<'_>,
+) {
+    let start = ui.painter().add(egui::Shape::Noop);
+    let response = egui::Frame::none()
+        .outer_margin(egui::Margin {
+            left: 10.0,
+            ..Default::default()
+        })
+        .show(ui, |ui| {
+            render_document_blocks(ui, blocks, id_salt, true, options);
+        })
+        .response;
+
+    ui.painter().set(
+        start,
+        egui::epaint::Shape::line_segment(
+            [
+                egui::pos2(response.rect.left_top().x, response.rect.left_top().y + 5.0),
+                egui::pos2(
+                    response.rect.left_bottom().x,
+                    response.rect.left_bottom().y - 5.0,
+                ),
+            ],
+            egui::Stroke::new(3.0, ui.visuals().weak_text_color()),
+        ),
+    );
+}
+
 fn render_code_block(
     ui: &mut egui::Ui,
     id_salt: &str,
@@ -263,6 +564,7 @@ fn render_code_block(
             });
     });
 }
+
 fn render_table_from_block(ui: &mut egui::Ui, table: &TableBlock, id_salt: &str) {
     render_table(
         ui,
@@ -293,6 +595,7 @@ fn render_table_from_block(ui: &mut egui::Ui, table: &TableBlock, id_salt: &str)
         id_salt,
     );
 }
+
 fn render_table(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str) {
     let num_cols = table.headers.len();
     if num_cols == 0 {
@@ -326,6 +629,7 @@ fn render_table(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str) {
         });
     });
 }
+
 fn render_table_grid(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str, col_widths: &[f32]) {
     let num_cols = table.headers.len();
 
@@ -359,6 +663,7 @@ fn render_table_grid(ui: &mut egui::Ui, table: &MarkdownTable, id_salt: &str, co
             }
         });
 }
+
 fn with_table_cell_ui(ui: &mut egui::Ui, width: f32, render: impl FnOnce(&mut egui::Ui)) {
     ui.scope(|ui| {
         ui.set_width(width);
@@ -368,6 +673,7 @@ fn with_table_cell_ui(ui: &mut egui::Ui, width: f32, render: impl FnOnce(&mut eg
         render(ui);
     });
 }
+
 fn render_cell_markdown<T: TableCellContent>(ui: &mut egui::Ui, content: &T, is_header: bool) {
     let render_style = InlineRenderStyle {
         base: if is_header {
@@ -385,6 +691,7 @@ fn render_cell_markdown<T: TableCellContent>(ui: &mut egui::Ui, content: &T, is_
         render_inline_markdown(ui, content.source_text(), render_style, &Default::default());
     }
 }
+
 pub(crate) fn count_emoji(s: &str) -> usize {
     s.chars()
         .filter(|c| {
@@ -398,6 +705,7 @@ pub(crate) fn count_emoji(s: &str) -> usize {
         })
         .count()
 }
+
 fn calculate_text_width_with_code(text: &str, ui: &egui::Ui) -> f32 {
     let body_font = egui::TextStyle::Body.resolve(ui.style());
     let mono_font = egui::TextStyle::Monospace.resolve(ui.style());
@@ -452,6 +760,7 @@ fn calculate_text_width_with_code(text: &str, ui: &egui::Ui) -> f32 {
 
     total_width
 }
+
 fn calculate_column_widths(table: &MarkdownTable, ui: &egui::Ui, available_width: f32) -> Vec<f32> {
     let font_id = egui::TextStyle::Body.resolve(ui.style());
     let mut widths: Vec<f32> = vec![0.0; table.headers.len()];
