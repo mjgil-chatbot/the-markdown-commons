@@ -47,6 +47,32 @@ pub struct MarkdownRenderOptions<'a> {
     /// blocks as shell. Entries are checked before syntect receives the tag.
     pub code_language_overrides: &'a [(&'a str, &'a str)],
 }
+fn collect_ordered_list_continuation(
+    blocks: &[Block],
+    start_index: usize,
+    current_indent: usize,
+    expected_start: usize,
+) -> (&[Block], Option<usize>, usize) {
+    let mut index = start_index;
+
+    while index < blocks.len() {
+        match &blocks[index] {
+            Block::OrderedList(list)
+                if list.indent == current_indent && list.start == expected_start =>
+            {
+                return (&blocks[start_index..index], Some(index), index);
+            }
+            Block::OrderedList(list) if list.indent <= current_indent => break,
+            Block::Paragraph(paragraph) if is_section_label_paragraph(&paragraph.content.nodes) => {
+                break;
+            }
+            Block::Heading(_) | Block::HorizontalRule => break,
+            _ => index += 1,
+        }
+    }
+
+    (&blocks[start_index..index], None, index)
+}
 fn collect_unordered_list_continuation(
     blocks: &[Block],
     start_index: usize,
