@@ -1,14 +1,17 @@
 use std::collections::HashMap;
+
 use crate::parse_util::{
     find_code_span_end, find_sequence, is_markdown_escapable, looks_like_email,
     looks_like_html_tag, looks_like_url, normalize_reference_label, parse_angle_bracket_content,
     parse_autolink, parse_bracket_content, parse_emoji_shortcode, parse_footnote_reference,
     parse_html_entity, parse_link_destination, starts_with_chars,
 };
+
 /// A map of link reference labels to their URL and optional title.
 ///
 /// Used by [`parse_inline_nodes`] to resolve reference-style links like `[text][label]`.
 pub type LinkDefinitions = HashMap<String, (String, Option<String>)>;
+
 /// Inline-level nodes parsed from markdown content.
 ///
 /// `InlineNode` represents text-level formatting: emphasis, strong, links,
@@ -67,6 +70,7 @@ pub enum InlineNode {
     /// Raw HTML content (when `allow_raw_html` is enabled).
     RawHtml(String),
 }
+
 /// Parse inline markdown content into a tree of [`InlineNode`] values.
 ///
 /// Handles emphasis, strong, strikethrough, code spans, links, images,
@@ -268,6 +272,7 @@ pub fn parse_inline_nodes(input: &str, link_defs: &LinkDefinitions) -> Vec<Inlin
 
     out
 }
+
 fn push_text(out: &mut Vec<InlineNode>, text: String) {
     if text.is_empty() {
         return;
@@ -279,6 +284,7 @@ fn push_text(out: &mut Vec<InlineNode>, text: String) {
         out.push(InlineNode::Text(text));
     }
 }
+
 fn find_single_marker(chars: &[char], target: char, start: usize) -> Option<usize> {
     for index in start..chars.len() {
         if chars[index] == target {
@@ -295,6 +301,7 @@ fn find_single_marker(chars: &[char], target: char, start: usize) -> Option<usiz
     }
     None
 }
+
 fn find_closing_sequence(chars: &[char], pattern: &str, start: usize) -> Option<usize> {
     let pattern_chars: Vec<char> = pattern.chars().collect();
     if pattern_chars.is_empty() || start >= chars.len() {
@@ -309,19 +316,23 @@ fn find_closing_sequence(chars: &[char], pattern: &str, start: usize) -> Option<
             && (pattern != "__" || can_close_underscore_marker(chars, index, 2))
     })
 }
+
 fn is_word_char(ch: Option<char>) -> bool {
     ch.is_some_and(char::is_alphanumeric)
 }
+
 fn can_open_underscore_marker(chars: &[char], index: usize, len: usize) -> bool {
     let prev = index.checked_sub(1).and_then(|pos| chars.get(pos)).copied();
     let next = chars.get(index + len).copied();
     !is_word_char(prev) || !is_word_char(next)
 }
+
 fn can_close_underscore_marker(chars: &[char], index: usize, len: usize) -> bool {
     let prev = index.checked_sub(1).and_then(|pos| chars.get(pos)).copied();
     let next = chars.get(index + len).copied();
     !is_word_char(prev) || !is_word_char(next)
 }
+
 fn parse_reference_lookup(
     chars: &[char],
     start: usize,
@@ -343,6 +354,7 @@ fn parse_reference_lookup(
     let (url, title) = link_defs.get(&key)?.clone();
     Some((url, title, start))
 }
+
 fn parse_link(
     chars: &[char],
     start: usize,
@@ -356,6 +368,7 @@ fn parse_link(
     };
     Some((text, url, title, end))
 }
+
 fn parse_image(
     chars: &[char],
     start: usize,
@@ -372,4 +385,212 @@ fn parse_image(
         parse_reference_lookup(chars, after_alt, &alt, link_defs)?
     };
     Some((alt, url, title, end))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_inline_nodes, InlineNode, LinkDefinitions};
+
+    #[test]
+    fn intraword_underscores_stay_literal() {
+        let nodes = parse_inline_nodes("foo_source_patches_bar", &LinkDefinitions::default());
+
+        assert_eq!(
+            nodes,
+            vec![InlineNode::Text("foo_source_patches_bar".to_string())]
+        );
+    }
+
+    #[test]
+    fn file_path_link_parses_correctly() {
+        let nodes = parse_inline_nodes(
+            "[deploy-raw-image.sh](/scripts/deploy-raw-image.sh) now requires a server number",
+            &LinkDefinitions::default(),
+        );
+        assert!(
+            matches!(&nodes[0], InlineNode::Link { url, .. } if url == "/scripts/deploy-raw-image.sh"),
+            "Expected Link node, got: {:?}",
+            &nodes[0]
+        );
+        assert!(
+            matches!(&nodes[1], InlineNode::Text(t) if t == " now requires a server number"),
+            "Expected Text node, got: {:?}",
+            &nodes[1]
+        );
+    }
+
+    #[test]
+    fn multiline_paragraph_with_links() {
+        let input = "./deploy-raw-image.sh 1 `bash -n` passed for\n[deploy-raw-image.sh](/scripts/deploy-raw-image.sh),\n[linode/deploy-raw-image.sh](/scripts/linode/deploy-raw-image.sh), and\n[linode/presign-raw-image.sh](/scripts/linode/presign-raw-image.sh). I did not run a\nlive `terraform apply`.";
+        let nodes = parse_inline_nodes(input, &LinkDefinitions::default());
+        let link_count = nodes
+            .iter()
+            .filter(|n| matches!(n, InlineNode::Link { .. }))
+            .count();
+        assert_eq!(
+            link_count, 3,
+            "Expected 3 links, got {link_count}. Nodes: {nodes:#?}"
+        );
+    }
+
+    #[test]
+    fn underscored_link_text_stays_literal() {
+        let nodes = parse_inline_nodes(
+            "[*_source_patches](/tmp/source_patches.diff)",
+            &LinkDefinitions::default(),
+        );
+
+        assert_eq!(
+            nodes,
+            vec![InlineNode::Link {
+                children: vec![InlineNode::Text("*_source_patches".to_string())],
+                url: "/tmp/source_patches.diff".to_string(),
+                title: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn entity_parsing_preserves_html_entities() {
+        let nodes = parse_inline_nodes("A &lt; B &gt; C", &LinkDefinitions::default());
+        // Entities are parsed as separate nodes
+        let entity_count = nodes
+            .iter()
+            .filter(|n| matches!(n, InlineNode::Entity(_)))
+            .count();
+        assert_eq!(
+            entity_count, 2,
+            "Expected 2 entities, got {entity_count}. Nodes: {nodes:#?}"
+        );
+        // The entities should be &lt; and &gt;
+        assert!(nodes
+            .iter()
+            .any(|n| matches!(n, InlineNode::Entity(e) if e == "&lt;")));
+        assert!(nodes
+            .iter()
+            .any(|n| matches!(n, InlineNode::Entity(e) if e == "&gt;")));
+    }
+
+    #[test]
+    fn code_span_with_multiple_backticks() {
+        // Double backtick code span
+        let nodes = parse_inline_nodes("`` code ``", &LinkDefinitions::default());
+        assert!(nodes.iter().any(|n| matches!(n, InlineNode::Code(_))));
+    }
+
+    #[test]
+    fn single_backtick_code_span() {
+        let nodes = parse_inline_nodes("`single`", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Code(c) if c == "single"));
+    }
+
+    #[test]
+    fn double_backtick_code_span_content() {
+        let nodes = parse_inline_nodes("``double``", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Code(c) if c == "double"));
+    }
+
+    #[test]
+    fn triple_backtick_code_span() {
+        let nodes = parse_inline_nodes("```triple```", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Code(c) if c == "triple"));
+    }
+
+    #[test]
+    fn code_span_with_pipe_inside() {
+        let nodes = parse_inline_nodes("`a | b`", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Code(c) if c == "a | b"));
+    }
+
+    #[test]
+    fn double_backtick_with_pipe_inside() {
+        let nodes = parse_inline_nodes("``a | b``", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Code(c) if c == "a | b"));
+    }
+
+    #[test]
+    fn nested_backticks_not_matched() {
+        // Triple backticks should match as a whole, not split on inner double
+        let nodes = parse_inline_nodes("``` ``inner`` ```", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Code(c) if c == " ``inner`` "));
+    }
+
+    #[test]
+    fn code_span_empty_no_code_node() {
+        // Empty backticks should not create code span
+        let nodes = parse_inline_nodes("``", &LinkDefinitions::default());
+        assert!(!nodes.iter().any(|n| matches!(n, InlineNode::Code(_))));
+    }
+
+    #[test]
+    fn emoji_shortcode_parsing() {
+        // Shortcode parsing - verify shortcode isn't treated as emphasis
+        let nodes = parse_inline_nodes(":rocket: text", &LinkDefinitions::default());
+        // Shortcode should be preserved or resolved as entity
+        assert!(!nodes.is_empty());
+    }
+
+    #[test]
+    fn emphasis_with_asterisk() {
+        let nodes = parse_inline_nodes("*emphasis*", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Emphasis(_)));
+    }
+
+    #[test]
+    fn strong_with_double_asterisk() {
+        let nodes = parse_inline_nodes("**strong**", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Strong(_)));
+    }
+
+    #[test]
+    fn inline_image_parsing() {
+        let nodes = parse_inline_nodes("![alt](url \"title\")", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Image { alt, .. } if alt == "alt"));
+    }
+
+    #[test]
+    fn autolink_url_parsing() {
+        let nodes = parse_inline_nodes("https://example.com", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Link { url, .. } if url == "https://example.com"));
+    }
+
+    #[test]
+    fn escaped_character_parsing() {
+        let nodes = parse_inline_nodes("Escaped \\\\* not emphasis", &LinkDefinitions::default());
+        // Backslash before non-markdown-char stays as-is
+        assert!(nodes
+            .iter()
+            .any(|n| matches!(n, InlineNode::Text(t) if t.contains("\\"))));
+    }
+
+    #[test]
+    fn raw_html_parsing() {
+        let nodes = parse_inline_nodes("<strong>bold</strong>", &LinkDefinitions::default());
+        assert!(nodes.iter().any(|n| matches!(n, InlineNode::RawHtml(_))));
+    }
+
+    #[test]
+    fn strikethrough_parsing() {
+        let nodes = parse_inline_nodes("~~strikethrough~~", &LinkDefinitions::default());
+        assert_eq!(nodes.len(), 1);
+        assert!(matches!(&nodes[0], InlineNode::Strikethrough(_)));
+    }
+
+    #[test]
+    fn malformed_brackets_stay_as_text() {
+        let nodes = parse_inline_nodes("[unclosed link", &LinkDefinitions::default());
+        assert!(nodes
+            .iter()
+            .any(|n| matches!(n, InlineNode::Text(t) if t.contains("unclosed"))));
+    }
 }
